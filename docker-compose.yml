@@ -1,0 +1,16 @@
+services:
+  kindle-calendar:
+    build: .
+    image: kindle-calendar:latest
+    container_name: kindle-calendar
+    restart: unless-stopped
+    ports:
+      - "8090:8000"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+      - DATA_DIR=/data
+    volumes:
+      - ./data:/data
+    shm_size: "256m"

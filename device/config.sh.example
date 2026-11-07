@@ -1,0 +1,6 @@
+# Copy to config.sh on the Kindle (/mnt/us/kindle-calendar/config.sh) and edit.
+SERVER="http://192.168.1.10:8090"
+TOKEN=""
+# Path of the fbink binary installed through MRPI (check with: find /mnt/us -name fbink)
+FBINK="/mnt/us/libkh/bin/fbink"
+FULL_REFRESH_EVERY=24

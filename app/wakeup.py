@@ -24,21 +24,39 @@ def _next_at(now: datetime, t: time) -> datetime:
     return target
 
 
-def next_slot(now: datetime, interval_min: int, night_start: time, night_end: time) -> datetime:
-    """Next render slot aligned to the interval, skipping the night window."""
-    if is_night(now.time(), night_start, night_end):
+def next_slot(
+    now: datetime,
+    interval_min: int,
+    night_start: time,
+    night_end: time,
+    skip_night: bool = False,
+) -> datetime:
+    """Next render slot aligned to the interval.
+
+    ``skip_night`` keeps the old behaviour of jumping straight to ``night_end``;
+    it is off by default because the panel is meant to read as a clock and the
+    clock patch keeps ticking through the night either way -- sleeping only froze
+    the poster (weather, calendar), which looked like a stalled screen.
+    """
+    if skip_night and is_night(now.time(), night_start, night_end):
         return _next_at(now, night_end)
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     elapsed = (now - midnight).total_seconds()
     step = interval_min * 60
     slot = midnight + timedelta(seconds=(int(elapsed // step) + 1) * step)
-    if is_night(slot.time(), night_start, night_end):
+    if skip_night and is_night(slot.time(), night_start, night_end):
         return _next_at(now, night_end)
     return slot
 
 
-def seconds_until_wakeup(now: datetime, interval_min: int, night_start: time, night_end: time) -> int:
-    target = next_slot(now, interval_min, night_start, night_end) + timedelta(seconds=RENDER_GRACE_S)
+def seconds_until_wakeup(
+    now: datetime,
+    interval_min: int,
+    night_start: time,
+    night_end: time,
+    skip_night: bool = False,
+) -> int:
+    target = next_slot(now, interval_min, night_start, night_end, skip_night) + timedelta(seconds=RENDER_GRACE_S)
     return max(MIN_SLEEP_S, int((target - now).total_seconds()))
 
 

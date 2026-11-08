@@ -1,0 +1,21 @@
+{
+	"items": [
+		{"name": "Kindle Calendar", "priority": 1, "items": [
+			{"name": "Start dashboard", "priority": 1, "action": "/mnt/us/kindle-calendar/start.sh"},
+			{"name": "Stop (restore UI)", "priority": 2, "action": "/mnt/us/kindle-calendar/stop.sh"},
+			{"name": "Enable autostart at boot", "priority": 3, "action": "/mnt/us/kindle-calendar/autostart-install.sh"},
+			{"name": "Disable autostart", "priority": 4, "action": "/mnt/us/kindle-calendar/autostart-remove.sh"},
+			{"name": "Front light", "priority": 5, "items": [
+				{"name": "Min (1)", "priority": 1, "action": "/mnt/us/kindle-calendar/light-min.sh"},
+				{"name": "Low (5)", "priority": 2, "action": "/mnt/us/kindle-calendar/light-low.sh"},
+				{"name": "Mid (10)", "priority": 3, "action": "/mnt/us/kindle-calendar/light-mid.sh"},
+				{"name": "High (16)", "priority": 4, "action": "/mnt/us/kindle-calendar/light-high.sh"},
+				{"name": "Max (24)", "priority": 5, "action": "/mnt/us/kindle-calendar/light-max.sh"},
+				{"name": "Restore last used", "priority": 6, "action": "/mnt/us/kindle-calendar/light.sh"},
+				{"name": "Log current level", "priority": 7, "action": "/mnt/us/kindle-calendar/light-status.sh"}
+			]},
+			{"name": "Probe (safe, read only)", "priority": 6, "action": "/mnt/us/kindle-calendar/probe.sh"},
+			{"name": "Test image (stop UI)", "priority": 7, "action": "/mnt/us/kindle-calendar/full.sh"}
+		]}
+	]
+}

@@ -6,6 +6,7 @@ import calendar
 import hashlib
 import io
 import logging
+import math
 import os
 import threading
 from datetime import date, datetime
@@ -15,6 +16,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from PIL import Image
 
+from . import device, quotes
 from .config import Settings, get_settings
 from .sources import holiday, lunar_info, weather
 
@@ -91,12 +93,16 @@ def build_context(now: datetime, s: Settings | None = None) -> dict[str, Any]:
 
     today_fc, forecast = _forecast(wx["daily"], today) if wx else (None, [])
 
+    battery = device.battery_info(now, s)
+
     return {
         "width": s.width,
         "height": s.height,
         "ym": f"{today.year}年{today.month}月",
         "weekday": WEEKDAYS[today.weekday()],
         "day": today.day,
+        "hh": now.strftime("%H"),
+        "mm": now.strftime("%M"),
         "lunar": lunar,
         "holiday": holidays.get(today.isoformat()),
         "weather": wx,
@@ -105,6 +111,9 @@ def build_context(now: datetime, s: Settings | None = None) -> dict[str, Any]:
         "weeks": _month_weeks(today, holidays),
         "city": s.city_name,
         "updated": now.strftime("%H:%M"),
+        "device_line": battery["text"] if battery else "",
+        "battery_low": bool(battery and battery["low"]),
+        "poem": quotes.pick(now, lunar.get("festivals") or ()),
         "warnings": warnings,
     }
 
@@ -128,6 +137,70 @@ def screenshot(html: str, width: int, height: int) -> bytes:
             return page.screenshot(type="png", full_page=False)
         finally:
             browser.close()
+
+
+CLOCK_PAD = 4  # bled around the .clock box so rounding never leaves a seam
+
+
+def screenshot_clock(html: str, width: int, height: int) -> tuple[bytes, dict[str, float]]:
+    """Screenshot only the .clock box, plus its position in CSS pixels.
+
+    Rendering from the *same* page as the poster (rather than a font-matched
+    re-implementation) is the only way to guarantee the per-minute patch and the
+    15-minute poster produce byte-identical glyphs -- otherwise the digits would
+    visibly jitter every time one replaces the other.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+        try:
+            page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
+            page.set_content(html, wait_until="load")
+            page.evaluate("document.fonts.ready")
+            el = page.query_selector(".clock")
+            if el is None:
+                raise RuntimeError("clock box missing from template")
+            b = el.bounding_box()
+            if b is None:
+                raise RuntimeError("clock box has no layout box")
+            # Layout boxes are fractional; the framebuffer is not.  Snap outwards
+            # to whole pixels and bleed a few pixels of the surrounding white so a
+            # 1px seam can never show up next to the digits.
+            box = {
+                "x": max(0, math.floor(b["x"]) - CLOCK_PAD),
+                "y": max(0, math.floor(b["y"]) - CLOCK_PAD),
+            }
+            box["width"] = min(width, math.ceil(b["x"] + b["width"]) + CLOCK_PAD) - box["x"]
+            box["height"] = min(height, math.ceil(b["y"] + b["height"]) + CLOCK_PAD) - box["y"]
+            return page.screenshot(type="png", clip=box), box
+        finally:
+            browser.close()
+
+
+def clock_device_rect(box: dict[str, float], s: Settings) -> dict[str, int]:
+    """Map the landscape clock box into framebuffer coordinates of the device.
+
+    ``to_eink`` rotates the landscape poster by ``-rotate`` degrees (clockwise for
+    the default 90), so a landscape point (x, y) lands at (H - y, x) on the device.
+    """
+    x0, y0 = box["x"], box["y"]
+    x1, y1 = x0 + box["width"], y0 + box["height"]
+    return {
+        "x": int(round(s.height - y1)),
+        "y": int(round(x0)),
+        "w": int(round(y1 - y0)),
+        "h": int(round(x1 - x0)),
+    }
+
+
+def render_clock(now: datetime, s: Settings | None = None) -> tuple[bytes, dict[str, int]]:
+    """Render the clock patch alone, rotated to device orientation."""
+    s = s or get_settings()
+    with _lock:
+        html = render_html(build_context(now, s))
+        patch, box = screenshot_clock(html, s.width, s.height)
+        return to_eink(patch, s.rotate)[0], clock_device_rect(box, s)
 
 
 def to_eink(png: bytes, rotate: int) -> tuple[bytes, bytes]:

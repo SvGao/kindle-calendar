@@ -1,6 +1,21 @@
 # Copy to config.sh on the Kindle (/mnt/us/kindle-calendar/config.sh) and edit.
+# The dashboard owns the screen, so get this right the first time: a wrong SERVER
+# means a frozen panel until you fix it over USB.
+
+# Where the NAS runs the renderer. Use the LAN address, not a hostname -- the
+# Kindle's resolver is slow and sometimes wrong right after waking up.
 SERVER="http://192.168.1.10:8090"
+# Must match TOKEN in the server's .env; leave empty when the server has none.
 TOKEN=""
+
 # Path of the fbink binary installed through MRPI (check with: find /mnt/us -name fbink)
 FBINK="/mnt/us/libkh/bin/fbink"
+
+# Fallback only: the live policy -- full-refresh cadence, clock on/off, sleep cap,
+# front-light level -- arrives from GET /api/plan on every loop, so change those in
+# the server's .env instead of here.
 FULL_REFRESH_EVERY=24
+
+# Local escape hatches, honoured before the plan is fetched:
+#   CLOCK=0   skip the per-minute clock patch
+#   LIGHT=0   skip the front-light polling

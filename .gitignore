@@ -1,7 +1,21 @@
 .env
-data/
+/data/
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-data-test/
+/data-test/
+
+# Kindle side: config.sh holds SERVER + TOKEN, everything else is produced at
+# runtime by dash.sh (image cache, etags, logs, the plan snapshot).
+device/config.sh
+device/*.log
+device/dash.png
+device/dash.etag
+device/clock.box
+device/clock.etag
+device/light.remote
+device/light.value
+device/plan.env
+device/no-autostart
+device/test-*.png

@@ -249,6 +249,16 @@ def get_weather(s: Settings, today: date) -> tuple[dict[str, Any] | None, bool]:
         return data, False
     except Exception as e:  # noqa: BLE001
         log.error("weather fetch failed (%s): %s", s.provider, e)
+        # QWeather has per-account hosts and quota limits; never let a hiccup
+        # blank the screen when the keyless provider can still answer.
+        if s.provider == "qweather":
+            try:
+                data = _openmeteo(s)
+                cache.write(CACHE_NAME, data)
+                log.warning("fell back to openmeteo for this render")
+                return data, False
+            except Exception as e2:  # noqa: BLE001
+                log.error("openmeteo fallback failed: %s", e2)
         data, fetched_at = cache.read(CACHE_NAME)
         if data is None:
             return None, True

@@ -9,26 +9,49 @@
   .wrap { display: grid; grid-template-columns: 520px 1fr; grid-template-rows: 1fr 64px; width: 100%; height: 100%; }
 
   /* ---- left: date ---- */
-  .left { border-right: 4px solid #000; padding: 36px 36px 30px; display: flex; flex-direction: column; }
+  .left { border-right: 4px solid #000; padding: 30px 36px 30px; display: flex; flex-direction: column; }
   .ym { display: flex; justify-content: space-between; font-size: 40px; font-weight: 700; }
-  .day { font-size: 360px; font-weight: 900; line-height: 0.95; text-align: center; letter-spacing: -8px; margin: 36px 0 30px; }
+  /* Noto Sans CJK sits its digits well below the em-box centre, so an evenly
+     spaced row leaves the number visibly low. Bias the margins upward to optically
+     centre it between the month line and 农历. */
+  .dayrow { display: flex; align-items: center; margin: -3px 0 34px; }
+  .day { font-size: 360px; font-weight: 900; line-height: 0.95; text-align: center; letter-spacing: -8px;
+         flex: 1 1 auto; min-width: 0; }
+  /* Two-digit days are ~390px wide at 360px; a touch smaller keeps a safe margin. */
+  .day.two { font-size: 336px; letter-spacing: -10px; }
+  /* Clock: horizontal HH:MM under the festivals row. .clockrow takes the leftover
+     space so the clock is optically centered between tags and 宜/忌, while .clock
+     stays a tight box -- the device repaints exactly this rect every minute.
+     Digits sit low in their em box, so nudge the patch up to even out the air. */
+  .clockrow { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  .clock { font-size: 132px; font-weight: 900; line-height: 1; letter-spacing: -5px; position: relative; top: -7px; }
   .lunar { font-size: 50px; font-weight: 700; text-align: center; }
-  .year { font-size: 32px; text-align: center; margin-top: 10px; }
-  .tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 20px; min-height: 52px; }
+  .year { font-size: 32px; text-align: center; margin-top: 5px; }
+  .tags { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 16px; min-height: 52px; }
   .tag { font-size: 30px; font-weight: 700; border: 3px solid #000; border-radius: 8px; padding: 2px 14px; }
   .tag.solid { background: #000; color: #fff; }
   .yiji { margin-top: auto; font-size: 30px; line-height: 1.75; }
+  .yiji > div { white-space: nowrap; overflow: hidden; }
   .yiji .k { display: inline-block; width: 46px; height: 46px; line-height: 40px; text-align: center;
              border: 3px solid #000; border-radius: 50%; font-weight: 700; margin-right: 12px; }
   .yiji .k.ji { background: #000; color: #fff; }
 
   /* ---- right: weather + calendar ---- */
   .right { display: grid; grid-template-rows: 236px 176px 1fr; min-width: 0; }
-  .now { display: flex; align-items: center; gap: 30px; padding: 0 40px; border-bottom: 3px solid #000; }
+  .now { display: flex; align-items: center; gap: 26px; padding: 0 40px; border-bottom: 3px solid #000; }
   .temp { font-size: 128px; font-weight: 800; line-height: 1; letter-spacing: -4px; }
   .temp small { font-size: 56px; vertical-align: top; letter-spacing: 0; }
+  /* City reads as a location tag: pin + name on one line, left of the weather
+     glyph, vertically centred with it. A vertical stack was tried and reads
+     worse -- the eye has to jump back up for the second character. */
+  .place { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
+  .place .pin { width: 34px; height: 34px; }
+  .place .pname { font-size: 32px; font-weight: 700; letter-spacing: 2px; white-space: nowrap; }
   .nowinfo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .nowtext { font-size: 46px; font-weight: 700; white-space: nowrap; }
+  /* The tag eats ~110px of the row, so a long condition ("多云转晴 5° / 14°")
+     has to be allowed to shrink rather than spill past the page edge. */
+  .nowtext { font-size: 46px; font-weight: 700; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
   .meta { font-size: 30px; white-space: nowrap; }
   .alert { display: inline-block; margin-top: 4px; font-size: 30px; font-weight: 700; background: #000; color: #fff;
            border-radius: 8px; padding: 2px 14px; max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -59,15 +82,25 @@
 
   /* ---- footer ---- */
   .footer { grid-column: 1 / 3; border-top: 4px solid #000; display: flex; align-items: center;
-            justify-content: space-between; padding: 0 36px; font-size: 28px; }
-  .footer .warn { font-weight: 700; }
+            justify-content: space-between; gap: 28px; padding: 0 36px; font-size: 28px; }
+  .footer > span:first-child { flex: 0 0 auto; white-space: nowrap; }
+  .footer .warn { font-weight: 700; flex: 0 0 auto; white-space: nowrap; }
+  .footer .dev { font-weight: 700; }
+  /* Low-battery glyph: drawn, not a Unicode ⚠, so it never falls back to an
+     emoji font or a missing-glyph box on the device's Noto build. */
+  .footer .dev .bico { width: 32px; height: 28px; vertical-align: -4px; margin-right: 8px; }
+  .footer .poem { flex: 1 1 auto; min-width: 0; text-align: center; font-size: 26px; letter-spacing: 1px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .footer .poem .by { font-size: 21px; margin-left: 14px; letter-spacing: 0; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <section class="left">
     <div class="ym"><span>{{ ym }}</span><span>{{ weekday }}</span></div>
-    <div class="day">{{ day }}</div>
+    <div class="dayrow">
+      <div class="day{% if day >= 10 %} two{% endif %}">{{ day }}</div>
+    </div>
     <div class="lunar">农历{{ lunar.date }}</div>
     <div class="year">{{ lunar.year }}</div>
     <div class="tags">
@@ -76,6 +109,7 @@
       {%- if lunar.jieqi %}<span class="tag solid">{{ lunar.jieqi }}</span>
       {%- elif lunar.next_term %}<span class="tag">{{ lunar.next_term }}</span>{% endif %}
     </div>
+    <div class="clockrow"><div class="clock">{{ hh }}:{{ mm }}</div></div>
     <div class="yiji">
       <div><span class="k">宜</span>{{ lunar.yi | join(" ") or "诸事不宜" }}</div>
       <div><span class="k ji">忌</span>{{ lunar.ji | join(" ") or "无" }}</div>
@@ -85,10 +119,13 @@
   <section class="right">
     {%- if weather %}
     <div class="now">
+      {#- Drawn rather than the Unicode pin character: the device's Noto build
+          has no emoji face, so a missing glyph would render as a box. #}
+      <div class="place"><svg class="pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.6c0 0 7-7 7-11.6A7 7 0 1 0 5 10c0 4.6 7 11.6 7 11.6Z" fill="none" stroke="#000" stroke-width="2.4" stroke-linejoin="round"/><circle cx="12" cy="9.9" r="2.7" fill="#000"/></svg><span class="pname">{{ city }}</span></div>
       {{ icon(weather.now.icon, 170) }}
       <div class="temp">{{ weather.now.temp }}<small>°C</small></div>
       <div class="nowinfo">
-        <div class="nowtext">{{ weather.now.text }}{% if today_fc %}　{{ today_fc.temp_min }}° / {{ today_fc.temp_max }}°{% endif %}</div>
+        <div class="nowtext">{{ weather.now.text }}{% if today_fc %} {{ today_fc.temp_min }}° / {{ today_fc.temp_max }}°{% endif %}</div>
         <div class="meta">湿度 {{ weather.now.humidity }}%　{{ weather.now.wind_dir }} {{ weather.now.wind_scale }}级</div>
         {%- if weather.aqi %}<div class="meta">空气质量 {{ weather.aqi.value }} {{ weather.aqi.category }}</div>{% endif %}
         {%- for a in weather.alerts[:1] %}<div><span class="alert">⚠ {{ a.title }}</span></div>{% endfor %}
@@ -103,7 +140,7 @@
       {%- endfor %}
     </div>
     {%- else %}
-    <div class="now"><div class="nodata">天气数据暂不可用</div></div>
+    <div class="now"><div class="nodata">{{ city }}　天气数据暂不可用</div></div>
     <div class="fc"></div>
     {%- endif %}
 
@@ -125,8 +162,9 @@
   </section>
 
   <footer class="footer">
-    <span>{{ city }}　更新于 {{ updated }}</span>
-    <span class="warn">{{ warnings | join("　") }}</span>
+    <span>更新于 {{ updated }}{% if device_line %}　<span class="dev">{% if battery_low %}<svg class="bico" viewBox="0 0 32 28" aria-hidden="true"><path d="M16 2.5 29.6 25.5H2.4Z" fill="none" stroke="#000" stroke-width="3.4" stroke-linejoin="round"/><rect x="14.2" y="9.6" width="3.6" height="7" fill="#000"/><rect x="14.2" y="19.2" width="3.6" height="3.4" fill="#000"/></svg>{% endif %}{{ device_line }}</span>{% endif %}</span>
+    {%- if poem %}<span class="poem" style="font-size: {{ poem.size }}px">{{ poem.text }}<span class="by">— {{ poem.author }}{% if poem.source %}{{ poem.source }}{% endif %}</span></span>{% endif %}
+    <span class="warn">{{ warnings[:1] | join("　") }}{% if warnings | length > 1 %} 等{{ warnings | length }}项{% endif %}</span>
   </footer>
 </div>
 </body>

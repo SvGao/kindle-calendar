@@ -147,7 +147,7 @@ cannot be shared is `config.sh`, because it carries the server address and token
 | `light.sh`, `light-min/low/mid/high/max.sh`, `light-status.sh` | Front light through `lipc`, bypassing the stock UI |
 | `full.sh` | One forced flashing repaint (clears ghosting on demand) |
 | `probe.sh` | Read-only diagnostics: framebuffer geometry, fbink path, wifi, battery |
-| `kual-menu.json`, `extensions/` | KUAL menu; the device copy lives at `/mnt/us/extensions/kindle-calendar/` |
+| `extensions/kindle-calendar/` | KUAL menu (`menu.json`, `config.xml`), copied to `/mnt/us/extensions/` |
 
 Install:
 

@@ -4,7 +4,7 @@
 
 # Where the NAS runs the renderer. Use the LAN address, not a hostname -- the
 # Kindle's resolver is slow and sometimes wrong right after waking up.
-SERVER="http://192.168.1.10:8090"
+SERVER="http://192.168.1.10:8091"
 # Must match TOKEN in the server's .env; leave empty when the server has none.
 TOKEN=""
 

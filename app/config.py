@@ -24,7 +24,7 @@ def _schedule(value: str) -> tuple[tuple[time, int | None], ...]:
 
     ``"23:00=3,06:00=user"`` means: from 23:00 the panel sits at 3, from 06:00 it
     goes back to whatever the user last picked on the phone page.  ``user`` (or an
-    empty value) is the only symbolic entry; anything else must be 1-24.
+    empty value) is the only symbolic entry; anything else must be 0-24 (0 = light off).
     """
     slots: list[tuple[time, int | None]] = []
     for part in value.split(","):
@@ -44,7 +44,7 @@ def _schedule(value: str) -> tuple[tuple[time, int | None], ...]:
             level = int(raw)
         except ValueError:
             continue
-        slots.append((at, max(1, min(24, level))))
+        slots.append((at, max(0, min(24, level))))
     slots.sort(key=lambda s: (s[0].hour, s[0].minute))
     return tuple(slots)
 

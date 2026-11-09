@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kindle 日历控制台</title>
+<style>
+  :root {
+    --bg: #f3f2ef; --card: #ffffff; --ink: #17181a; --sub: #6b6c70; --faint: #9a9a96;
+    --line: #e2e0db; --accent: #1f5eff; --accent-ink: #fff; --ok: #1f8a4c; --warn: #c2410c;
+    --chip: #f0efeb; --shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141516; --card: #1d1e20; --ink: #ececea; --sub: #a3a4a8; --faint: #77787c;
+      --line: #2e2f32; --accent: #6b93ff; --accent-ink: #0d0e10; --ok: #4ade80; --warn: #fb923c;
+      --chip: #26272a; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--ink); font-size: 15px; line-height: 1.55; }
+  main { max-width: 640px; margin: 0 auto; padding: 18px 16px 60px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin: 4px 2px 14px; }
+  header h1 { font-size: 20px; font-weight: 700; }
+  header span { font-size: 13px; color: var(--faint); }
+  nav { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px 14px; padding: 0 16px 4px; scrollbar-width: none; }
+  nav a { flex: 0 0 auto; font-size: 14px; color: var(--sub); text-decoration: none; padding: 6px 12px;
+          border-radius: 999px; background: var(--chip); }
+  section.card { background: var(--card); border-radius: 16px; padding: 18px 18px 20px; margin-bottom: 14px;
+                 box-shadow: var(--shadow); scroll-margin-top: 12px; }
+  h2 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+  .help { font-size: 13px; color: var(--sub); margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1 1 auto; min-width: 0; }
+  button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; padding: 10px 16px;
+           background: var(--chip); color: var(--ink); font-weight: 600; }
+  button.primary { background: var(--accent); color: var(--accent-ink); }
+  button.ghost { background: transparent; color: var(--accent); padding: 6px 4px; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+                  border-radius: 10px; padding: 9px 11px; min-width: 0; }
+  label { user-select: none; }
+
+  /* status */
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--faint); }
+  .pill.on .dot { background: var(--ok); } .pill.off .dot { background: var(--warn); }
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 16px; margin: 14px 0 16px; }
+  .stat small { display: block; font-size: 12px; color: var(--faint); }
+  .stat b { font-size: 15px; font-weight: 600; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  .preview { width: 100%; border-radius: 10px; border: 1px solid var(--line); display: block; background: #fff; }
+
+  /* light */
+  .lv { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 6px; }
+  .lv b { font-size: 64px; line-height: 1; font-weight: 800; letter-spacing: -2px; font-variant-numeric: tabular-nums; }
+  .lv span { color: var(--faint); }
+  .meter { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; margin: 6px 0 12px; }
+  .meter i { height: 8px; border-radius: 2px; background: var(--line); }
+  .meter i.on { background: var(--ink); }
+  .state { font-size: 14px; color: var(--sub); margin-bottom: 12px; }
+  .state b { color: var(--ink); }
+  .mode { background: var(--chip); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin-bottom: 14px; }
+  .mode .row { justify-content: space-between; }
+  .step { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .step button { height: 56px; font-size: 28px; font-weight: 700; }
+  input[type=range] { width: 100%; padding: 0; border: 0; background: transparent; height: 36px; accent-color: var(--accent); }
+  .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .presets button { padding: 9px 6px; font-weight: 600; font-size: 14px; }
+  .presets button em { display: block; font-style: normal; font-size: 12px; color: var(--faint); font-weight: 500; }
+  .presets button.on { background: var(--ink); color: var(--card); }
+  .presets button.on em { color: inherit; opacity: .7; }
+
+  /* switches */
+  .switch { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .switch:first-of-type { border-top: 0; }
+  .switch .txt { flex: 1; } .switch .txt b { display: block; font-weight: 600; }
+  .switch .txt small { color: var(--sub); font-size: 13px; }
+  .tg { position: relative; flex: 0 0 auto; width: 46px; height: 28px; margin-top: 2px; }
+  .tg input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .tg span { position: absolute; inset: 0; border-radius: 999px; background: var(--line); transition: .15s; }
+  .tg span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 22px; height: 22px;
+                    border-radius: 50%; background: #fff; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .tg input:checked + span { background: var(--accent); }
+  .tg input:checked + span::after { transform: translateX(18px); }
+
+  /* schedule */
+  .slots { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+  .slot { display: grid; grid-template-columns: auto minmax(132px, 1.3fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .slot input, .slot select { width: 100%; }
+  .slot .from { font-size: 13px; color: var(--sub); }
+  .slot .x { padding: 8px 12px; color: var(--sub); }
+  .timeline { position: relative; height: 26px; border-radius: 8px; overflow: hidden; display: flex; margin-top: 4px; }
+  .timeline div { height: 100%; }
+  .ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin-top: 3px; }
+
+  /* anniversaries */
+  .ev { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .ev:first-child { border-top: 0; }
+  .ev .days { flex: 0 0 64px; text-align: center; }
+  .ev .days b { display: block; font-size: 24px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .ev .days small { font-size: 12px; color: var(--faint); }
+  .ev .info { flex: 1; min-width: 0; } .ev .info b { font-weight: 600; }
+  .ev .info small { display: block; color: var(--sub); font-size: 13px; }
+  .empty { color: var(--faint); font-size: 14px; padding: 8px 0; }
+  .form { background: var(--chip); border-radius: 12px; padding: 14px; margin-top: 12px; display: none; }
+  .form.open { display: block; }
+  .form .f { margin-bottom: 12px; } .form .f > small { display: block; font-size: 12px; color: var(--sub); margin-bottom: 4px; }
+  .seg { display: inline-flex; background: var(--bg); border-radius: 10px; padding: 3px; gap: 2px; }
+  .seg button { padding: 7px 14px; border-radius: 8px; background: transparent; font-weight: 500; }
+  .seg button.on { background: var(--card); box-shadow: var(--shadow); font-weight: 700; }
+  .lunarpick { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  pre { font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+        max-height: 360px; overflow: auto; background: var(--bg); border-radius: 10px; padding: 10px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0;
+           background: var(--ink); color: var(--card); padding: 10px 16px; border-radius: 10px; font-size: 14px;
+           transition: .2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; transform: translateX(-50%); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Kindle 日历</h1><span id="clock"></span></header>
+  <nav>
+    <a href="#status">状态</a><a href="#light">亮度</a><a href="#schedule">定时亮度</a>
+    <a href="#events">纪念日</a><a href="#display">显示</a><a href="#notify">提醒</a><a href="#log">日志</a>
+  </nav>
+
+  <section class="card" id="status">
+    <div class="row"><h2 class="grow">设备状态</h2><span class="pill" id="online"><i class="dot"></i><span>…</span></span></div>
+    <div class="stats">
+      <div class="stat"><small>最后联系</small><b id="st-contact">—</b></div>
+      <div class="stat"><small>电量</small><b id="st-batt">—</b></div>
+      <div class="stat"><small>画面更新</small><b id="st-render">—</b></div>
+      <div class="stat"><small>天气数据</small><b id="st-wx">—</b></div>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="rerender(this)">立即更新画面</button>
+      <button onclick="fullRefresh(this)">全屏刷新一次</button>
+    </div>
+    <p class="help" style="margin:10px 0 0">“立即更新画面”会重新拉取天气、重画；Kindle 在 1 分钟内换上新画面。屏幕有残影时点“全屏刷新一次”，会黑白闪一下。</p>
+  </section>
+
+  <section class="card">
+    <details id="pv"><summary>当前画面预览</summary>
+      <p class="help" style="margin:8px 0">这就是 Kindle 上显示的内容（横屏）。</p>
+      <img class="preview" id="preview" alt="当前画面">
+    </details>
+  </section>
+
+  <section class="card" id="light">
+    <h2>屏幕亮度</h2>
+    <p class="help">0 是关灯，24 最亮。调完后 Kindle 最多 1 分钟就会跟着变。</p>
+    <div class="lv"><b id="lv">–</b><span>/ 24</span></div>
+    <div class="meter" id="meter"></div>
+    <div class="state" id="lstate"></div>
+    <div class="mode" id="lmode"></div>
+    <div class="step"><button onclick="setLevel(cur - 1)">−</button><button onclick="setLevel(cur + 1)">+</button></div>
+    <input type="range" id="slider" min="0" max="24" step="1" oninput="previewLevel(this.value)" onchange="setLevel(this.value)">
+    <div class="presets" id="presets"></div>
+  </section>
+
+  <section class="card" id="schedule">
+    <h2>定时亮度</h2>
+    <p class="help">每一行表示“从这个时间开始用这个亮度”，一直用到下一行的时间；最后一行会接到第二天第一行。选“我的亮度”就用上面手动调的数值。</p>
+    <label class="switch" style="border:0;padding-top:0">
+      <span class="txt"><b>按时间自动调亮度</b><small>关掉后一直用上面手动调的亮度。</small></span>
+      <span class="tg"><input type="checkbox" id="auto" onchange="setAuto(this.checked)"><span></span></span>
+    </label>
+    <div class="timeline" id="timeline"></div>
+    <div class="ticks"><span>0点</span><span>6点</span><span>12点</span><span>18点</span><span>24点</span></div>
+    <p class="help" style="margin:4px 0 0">色条越亮表示那段时间灯越亮，最暗的是关灯。</p>
+    <div class="slots" id="slots"></div>
+    <div class="row" style="flex-wrap:wrap">
+      <button onclick="addSlot()">＋ 添加时段</button>
+      <button class="ghost" onclick="exampleSlots()">填入常用方案</button>
+      <span class="grow"></span>
+      <button class="primary" onclick="saveSlots(this)">保存定时</button>
+    </div>
+    <p class="help" id="schedsrc" style="margin:10px 0 0"></p>
+  </section>
+
+  <section class="card" id="events">
+    <div class="row"><h2 class="grow">纪念日 / 生日 / 倒计时</h2><button onclick="openForm()">＋ 添加</button></div>
+    <p class="help">离得最近的一个会显示在画面左侧标签里（例如“距妈妈生日12天”），当天会变成黑底；月历里那天会写上名字。</p>
+    <div id="evlist"></div>
+    <div class="form" id="evform">
+      <input type="hidden" id="ev-id">
+      <div class="f"><small>名称（最多 12 个字，月历里只显示前 3 个字）</small><input id="ev-name" maxlength="12" placeholder="例如：妈妈生日" style="width:100%"></div>
+      <div class="f"><small>类型</small>
+        <div class="seg" id="ev-kind">
+          <button data-v="birthday">生日</button><button data-v="anniversary">纪念日</button><button data-v="countdown">倒计时</button>
+        </div>
+        <small id="ev-kindhelp" style="margin-top:6px"></small>
+      </div>
+      <div class="f"><small>历法</small>
+        <div class="seg" id="ev-cal"><button data-v="solar">公历</button><button data-v="lunar">农历</button></div>
+      </div>
+      <div class="f" id="ev-solar"><small>日期</small><input type="date" id="ev-date"></div>
+      <div class="f" id="ev-lunar"><small>农历日期（年份可不填）</small>
+        <div class="lunarpick">
+          <input id="ev-ly" inputmode="numeric" placeholder="年份">
+          <select id="ev-lm"></select><select id="ev-ld"></select>
+        </div>
+      </div>
+      <label class="f row" id="ev-noyear-row"><input type="checkbox" id="ev-noyear"> <span>不记得年份（就不显示几岁、几周年）</span></label>
+      <div class="row"><button class="ghost" onclick="closeForm()">取消</button><span class="grow"></span>
+        <button class="primary" onclick="saveEvent(this)">保存</button></div>
+    </div>
+    <div class="row" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+      <span class="grow">提前多少天开始在画面上显示</span>
+      <input id="evdays" type="number" min="0" max="366" style="width:84px" onchange="saveSetting({event_days: this.value})">
+      <span>天</span>
+    </div>
+  </section>
+
+  <section class="card" id="display">
+    <h2>显示</h2>
+    <p class="help">改完会马上重画，Kindle 1 分钟内更新。</p>
+    <label class="switch"><span class="txt"><b>每分钟走时钟</b><small>左侧的“时:分”每分钟只局部刷新那一小块，不闪屏。</small></span>
+      <span class="tg"><input type="checkbox" id="s-clock" onchange="saveSetting({clock_enabled: this.checked})"><span></span></span></label>
+    <label class="switch"><span class="txt"><b>整点清一下时钟残影</b><small>每小时整点让时钟那一小块黑白闪一下，数字会一直保持清晰。</small></span>
+      <span class="tg"><input type="checkbox" id="s-flash" onchange="saveSetting({clock_flash: this.checked})"><span></span></span></label>
+    <label class="switch"><span class="txt"><b>底部显示诗句</b><small>按季节、节日和时段挑选，每 15 分钟换一句。</small></span>
+      <span class="tg"><input type="checkbox" id="s-poem" onchange="saveSetting({show_poem: this.checked})"><span></span></span></label>
+    <label class="switch"><span class="txt"><b>夜里暂停更新画面</b><small id="s-night-help"></small></span>
+      <span class="tg"><input type="checkbox" id="s-night" onchange="saveSetting({night_sleep: this.checked})"><span></span></span></label>
+  </section>
+
+  <section class="card" id="notify">
+    <h2>手机提醒</h2>
+    <p class="help">Kindle 电量低或有新的天气预警时，推一条消息到手机。同一件事只提醒一次。</p>
+    <div class="f" style="margin-bottom:12px">
+      <select id="n-kind" onchange="notifyHelp()" style="width:100%">
+        <option value="none">不推送</option>
+        <option value="bark">Bark（iPhone）</option>
+        <option value="wecom">企业微信群机器人</option>
+        <option value="webhook">通用 Webhook（POST JSON）</option>
+      </select>
+    </div>
+    <div class="f" id="n-urlrow" style="margin-bottom:6px"><input id="n-url" style="width:100%" autocomplete="off"></div>
+    <p class="help" id="n-help"></p>
+    <label class="switch"><span class="txt"><b>电量低于 20% 且没在充电</b></span>
+      <span class="tg"><input type="checkbox" id="n-battery"><span></span></span></label>
+    <label class="switch"><span class="txt"><b>新的天气预警</b><small>需要和风天气 key，Open-Meteo 没有预警数据。</small></span>
+      <span class="tg"><input type="checkbox" id="n-alert"><span></span></span></label>
+    <div class="actions" style="margin-top:6px"><button class="primary" onclick="saveNotify(this)">保存</button>
+      <button onclick="testNotify(this)">发一条测试</button></div>
+  </section>
+
+  <section class="card" id="log">
+    <details id="logbox" ontoggle="if (this.open) loadLog()"><summary>设备日志</summary>
+      <p class="help" style="margin:8px 0">Kindle 每次更新画面后上传的最近日志，排查问题时看这里。</p>
+      <pre id="logtext">加载中…</pre>
+      <button class="ghost" onclick="loadLog()">刷新日志</button>
+    </details>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const u = (p) => p + (TOKEN ? (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN) : '');
+let S = null, cur = 12, slots = [], editing = null;
+const PRESETS = [[0, '关灯'], [2, '微光'], [6, '暗'], [12, '适中'], [18, '亮'], [24, '最亮']];
+const LM = ['正月','二月','三月','四月','五月','六月','七月','八月','九月','十月','冬月','腊月'];
+const LD = ['初一','初二','初三','初四','初五','初六','初七','初八','初九','初十','十一','十二','十三','十四','十五',
+            '十六','十七','十八','十九','二十','廿一','廿二','廿三','廿四','廿五','廿六','廿七','廿八','廿九','三十'];
+const $ = (id) => document.getElementById(id);
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); }
+async function get(p) { const r = await fetch(u(p), {cache: 'no-store'}); if (!r.ok) throw new Error(r.status); return r.json(); }
+async function post(p, body) {
+  const r = await fetch(u(p), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || j.detail || r.status);
+  return j;
+}
+function busy(btn, on) { if (btn) btn.disabled = on; }
+function ago(min) {
+  if (min == null) return '从未';
+  if (min < 1) return '刚刚';
+  if (min < 60) return Math.round(min) + ' 分钟前';
+  if (min < 1440) return Math.floor(min / 60) + ' 小时前';
+  return Math.floor(min / 1440) + ' 天前';
+}
+const hm = (iso) => iso ? iso.slice(11, 16) : '—';
+
+async function load() {
+  S = await get('/api/console');
+  drawStatus(); drawLight(); drawSchedule(); drawEvents(); drawDisplay(); drawNotify();
+}
+async function refreshLive() { try { S = await get('/api/console'); drawStatus(); drawLight(); } catch (e) {} }
+
+function drawStatus() {
+  const d = S.device, p = $('online');
+  p.className = 'pill ' + (d.minutes == null ? '' : d.online ? 'on' : 'off');
+  p.querySelector('span').textContent = d.minutes == null ? '还没连上过' : d.online ? '在线' : '离线';
+  $('st-contact').textContent = d.minutes == null ? '从未' : ago(d.minutes) + '（' + hm(d.last_contact) + '）';
+  $('st-batt').textContent = d.battery == null ? '—' : d.battery + '%' + (d.charging ? ' 充电中' : '');
+  const r = S.render;
+  $('st-render').textContent = r ? (r.ok ? hm(r.at) + (r.seconds != null ? '，用时 ' + r.seconds + ' 秒' : '') : '失败：' + r.error) : '—';
+  const w = S.weather, name = {qweather: '和风', openmeteo: 'Open-Meteo', fake: '测试数据'}[w.provider] || w.provider;
+  $('st-wx').textContent = name + (w.minutes != null ? ' · ' + ago(w.minutes) : '');
+  $('clock').textContent = S.city + ' ' + hm(S.now);
+  if ($('pv').open) $('preview').src = u('/preview.png?t=' + Date.now());
+}
+$('pv').addEventListener('toggle', () => { if ($('pv').open) $('preview').src = u('/preview.png?t=' + Date.now()); });
+
+function levelName(v) { let n = ''; for (const [lv, name] of PRESETS) if (v >= lv) n = name; return v === 0 ? '关灯' : n; }
+function drawMeter(v) { $('meter').innerHTML = Array.from({length: 24}, (_, i) => `<i class="${i < v ? 'on' : ''}"></i>`).join(''); }
+function previewLevel(v) { v = +v; $('lv').textContent = v; drawMeter(v); }
+function drawLight() {
+  const L = S.light; cur = L.effective;
+  previewLevel(cur); $('slider').value = cur;
+  $('presets').innerHTML = PRESETS.map(([v, n]) =>
+    `<button class="${v === cur ? 'on' : ''}" onclick="setLevel(${v})">${v}<em>${n}</em></button>`).join('');
+  let st;
+  if (!S.device.online) st = `Kindle 现在离线，联网后 1 分钟内会调到 <b>${cur}</b>。`;
+  else if (L.applied === cur) st = `Kindle 已经是 <b>${cur}</b>（${levelName(cur)}）。`;
+  else if (L.applied == null) st = `等待 Kindle 第一次应用（最多 1 分钟）。`;
+  else st = `Kindle 现在是 <b>${L.applied}</b>，正在调到 <b>${cur}</b>（最多 1 分钟）。`;
+  $('lstate').innerHTML = st;
+  let mode;
+  if (!L.night_auto) mode = '<b>手动模式</b>：一直保持这个亮度。想按时间自动变暗，打开下面的“定时亮度”。';
+  else if (L.hold) mode = `<div class="row"><span class="grow"><b>临时手动</b>：保持到 ${L.next_change}，之后恢复定时。</span>
+      <button class="ghost" onclick="resume()">现在恢复定时</button></div>`;
+  else if (L.slot && L.dimmed) mode = `<b>定时中</b>：按 ${L.slot} 的规则用 ${cur}${L.next_change ? '，' + L.next_change + ' 换下一个' : ''}。这时手动调整会临时生效到 ${L.next_change}。`;
+  else mode = `<b>定时中</b>：现在用你的亮度 ${L.level}${L.next_change ? '，' + L.next_change + ' 换下一个时段' : ''}。`;
+  $('lmode').innerHTML = mode;
+}
+async function setLevel(v) {
+  v = Math.max(0, Math.min(24, parseInt(v, 10)));
+  if (isNaN(v)) return;
+  try { S.light = await post('/api/light', {level: v}); drawLight(); drawSchedule(); toast('亮度设为 ' + v + '，Kindle 1 分钟内生效'); }
+  catch (e) { toast('没保存上：' + e.message); }
+}
+async function resume() { S.light = await post('/api/light', {resume: 1}); drawLight(); toast('已恢复定时'); }
+async function setAuto(on) { S.light = await post('/api/light', {night_auto: on ? 1 : 0}); drawLight(); drawSchedule();
+  toast(on ? '已开启定时亮度' : '已关闭定时亮度'); }
+
+function levelOptions(sel) {
+  let h = `<option value="user" ${sel === null ? 'selected' : ''}>我的亮度</option>`;
+  for (let i = 0; i <= 24; i++) h += `<option value="${i}" ${sel === i ? 'selected' : ''}>${i}${i === 0 ? '（关灯）' : ''}</option>`;
+  return h;
+}
+function drawSchedule() {
+  const L = S.light; $('auto').checked = L.night_auto;
+  if (!drawSchedule.dirty) slots = L.schedule.map(([t, v]) => ({t, v}));
+  $('slots').innerHTML = slots.length ? slots.map((s, i) => `<div class="slot">
+      <span class="from">从</span>
+      <input type="time" value="${s.t}" onchange="slots[${i}].t=this.value;dirty()">
+      <select onchange="slots[${i}].v=this.value==='user'?null:+this.value;dirty()">${levelOptions(s.v)}</select>
+      <button class="x" onclick="slots.splice(${i},1);dirty();drawSchedule()">删除</button></div>`).join('')
+    : '<div class="empty">还没有时段，亮度会一直用手动值。</div>';
+  drawTimeline();
+  $('schedsrc').textContent = L.schedule_source === 'console' ? '' : '当前用的是 .env 里的默认方案，保存后以这里为准。';
+}
+function dirty() { drawSchedule.dirty = true; drawTimeline(); }
+function drawTimeline() {
+  const sorted = slots.filter(s => s.t).map(s => ({m: +s.t.slice(0, 2) * 60 + +s.t.slice(3), v: s.v})).sort((a, b) => a.m - b.m);
+  if (!sorted.length) { $('timeline').innerHTML = `<div style="flex:1;background:${shade(S.light.level)}"></div>`; return; }
+  const segs = [], last = sorted[sorted.length - 1];
+  let prevM = 0, prevV = last.v;
+  for (const s of sorted) { if (s.m > prevM) segs.push([s.m - prevM, prevV]); prevM = s.m; prevV = s.v; }
+  segs.push([1440 - prevM, prevV]);
+  $('timeline').innerHTML = segs.map(([w, v]) => `<div style="flex:${w};background:${shade(v === null ? S.light.level : v)}"
+      title="${v === null ? '我的亮度' : v}"></div>`).join('');
+}
+function shade(v) { const l = 18 + v * 3.2; return `hsl(45, 95%, ${Math.min(92, l)}%)`; }
+function addSlot() { slots.push({t: '22:00', v: 4}); dirty(); drawSchedule(); }
+function exampleSlots() { slots = [{t: '07:00', v: null}, {t: '21:30', v: 6}, {t: '23:00', v: 1}]; dirty(); drawSchedule();
+  toast('已填入：白天用我的亮度，21:30 调暗，23:00 微光；记得保存'); }
+async function saveSlots(btn) {
+  busy(btn, true);
+  try {
+    const body = slots.filter(s => s.t).map(s => [s.t, s.v]);
+    S.light = await post('/api/light', {schedule: body}); drawSchedule.dirty = false; drawLight(); drawSchedule(); toast('定时已保存');
+  } catch (e) { toast('保存失败：' + e.message); } finally { busy(btn, false); }
+}
+
+function evDateText(e) {
+  const p = e.date.split('-').map(Number), [y, m, d] = p.length === 3 ? p : [null, ...p];
+  const md = e.lunar ? `农历${LM[m - 1]}${LD[d - 1]}` : `${m}月${d}日`;
+  return (y ? y + '年' : '') + md;
+}
+function drawEvents() {
+  const up = Object.fromEntries(S.upcoming.map(x => [x.id, x]));
+  const list = [...S.anniversaries].sort((a, b) => ((up[a.id] || {days: 9999}).days - (up[b.id] || {days: 9999}).days));
+  const box = $('evlist'); box.innerHTML = '';
+  if (!list.length) { box.innerHTML = '<div class="empty">还没有添加。点右上角“添加”，比如家人生日、结婚纪念日、放假倒计时。</div>'; }
+  for (const e of list) {
+    const x = up[e.id], row = document.createElement('div'); row.className = 'ev';
+    const days = x ? (x.days === 0 ? '<b>今天</b>' : `<b>${x.days}</b><small>天后</small>`) : '<small>已过</small>';
+    row.innerHTML = `<div class="days">${days}</div><div class="info"><b></b><small></small></div>
+      <button class="ghost">编辑</button><button class="ghost" style="color:var(--warn)">删除</button>`;
+    row.querySelector('.info b').textContent = x ? x.label : e.name;
+    row.querySelector('.info small').textContent = `${{birthday: '生日', anniversary: '纪念日', countdown: '倒计时'}[e.kind]} · ${evDateText(e)}` + (x ? ` · ${x.date}` : '');
+    const [eb, db] = row.querySelectorAll('button');
+    eb.onclick = () => openForm(e); db.onclick = () => delEvent(e);
+    box.appendChild(row);
+  }
+  $('evdays').value = S.settings.event_days;
+}
+function seg(id, v) { for (const b of $(id).children) b.classList.toggle('on', b.dataset.v === v); }
+function segVal(id) { const b = [...$(id).children].find(b => b.classList.contains('on')); return b && b.dataset.v; }
+for (const id of ['ev-kind', 'ev-cal']) for (const b of $(id).children) b.onclick = () => { seg(id, b.dataset.v); formMode(); };
+$('ev-lm').innerHTML = LM.map((n, i) => `<option value="${i + 1}">${n}</option>`).join('');
+$('ev-ld').innerHTML = LD.map((n, i) => `<option value="${i + 1}">${n}</option>`).join('');
+function formMode() {
+  const kind = segVal('ev-kind'), lunar = segVal('ev-cal') === 'lunar';
+  $('ev-solar').style.display = lunar ? 'none' : ''; $('ev-lunar').style.display = lunar ? '' : 'none';
+  $('ev-noyear-row').style.display = (kind === 'countdown' || lunar) ? 'none' : '';
+  $('ev-kindhelp').textContent = {birthday: '每年重复，填了年份会显示几岁。', anniversary: '每年重复，填了年份会显示几周年。',
+    countdown: '只算一次，比如考试、旅行出发日，过了就不再显示。'}[kind];
+}
+function openForm(e) {
+  editing = e || null; $('evform').classList.add('open');
+  $('ev-name').value = e ? e.name : '';
+  seg('ev-kind', e ? e.kind : 'birthday'); seg('ev-cal', e && e.lunar ? 'lunar' : 'solar');
+  const p = e ? e.date.split('-').map(Number) : [], full = p.length === 3;
+  const [y, m, d] = full ? p : [null, ...p];
+  $('ev-noyear').checked = !!e && !full;
+  $('ev-date').value = e && !e.lunar ? `${y || new Date().getFullYear()}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` : '';
+  $('ev-ly').value = e && e.lunar && y ? y : ''; $('ev-lm').value = e && e.lunar ? m : 1; $('ev-ld').value = e && e.lunar ? d : 1;
+  formMode(); $('ev-name').focus();
+}
+function closeForm() { $('evform').classList.remove('open'); editing = null; }
+async function saveAnniversaries(list, btn, msg) {
+  busy(btn, true);
+  try { S = await post('/api/settings', {anniversaries: list}); drawEvents(); toast(msg); return true; }
+  catch (e) { toast('保存失败：' + e.message); return false; } finally { busy(btn, false); }
+}
+async function saveEvent(btn) {
+  const name = $('ev-name').value.trim(), kind = segVal('ev-kind'), lunar = segVal('ev-cal') === 'lunar';
+  if (!name) return toast('先写个名称');
+  let date;
+  if (lunar) {
+    const y = $('ev-ly').value.trim(), mm = String($('ev-lm').value).padStart(2, '0'), dd = String($('ev-ld').value).padStart(2, '0');
+    if (kind === 'countdown' && !/^\d{4}$/.test(y)) return toast('倒计时要填年份');
+    if (y && !/^\d{4}$/.test(y)) return toast('年份写 4 位数字，或者留空');
+    date = (y ? y + '-' : '') + mm + '-' + dd;
+  } else {
+    const v = $('ev-date').value; if (!v) return toast('选一个日期');
+    date = ($('ev-noyear').checked && kind !== 'countdown') ? v.slice(5) : v;
+  }
+  const item = {id: editing ? editing.id : undefined, name, kind, lunar, date};
+  const list = S.anniversaries.filter(x => !editing || x.id !== editing.id).concat([item]);
+  if (await saveAnniversaries(list, btn, '已保存，画面马上更新')) closeForm();
+}
+async function delEvent(e) {
+  if (!confirm(`删除“${e.name}”？`)) return;
+  await saveAnniversaries(S.anniversaries.filter(x => x.id !== e.id), null, '已删除');
+}
+
+function drawDisplay() {
+  const s = S.settings;
+  $('s-clock').checked = s.clock_enabled; $('s-flash').checked = s.clock_flash;
+  $('s-poem').checked = s.show_poem; $('s-night').checked = s.night_sleep;
+  $('s-night-help').textContent = `${s.night_start}–${s.night_end} 之间不重画天气和日历（时钟照走）。默认关闭，整晚每 ${s.interval_min} 分钟照常更新。`;
+}
+async function saveSetting(body) {
+  try { S = await post('/api/settings', body); drawDisplay(); drawEvents(); toast('已保存，画面马上更新'); }
+  catch (e) { toast('保存失败：' + e.message); }
+}
+
+const NOTIFY_HELP = {
+  none: '', bark: '在 Bark App 里复制服务器地址，形如 https://api.day.app/你的Key',
+  wecom: '企业微信群 → 添加群机器人 → 复制 Webhook 地址',
+  webhook: '会向这个地址 POST {"title": "...", "body": "..."}',
+};
+function notifyHelp() {
+  const k = $('n-kind').value; $('n-help').textContent = NOTIFY_HELP[k];
+  $('n-urlrow').style.display = k === 'none' ? 'none' : '';
+  $('n-url').placeholder = {bark: 'https://api.day.app/xxxx', wecom: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…', webhook: 'https://…'}[k] || '';
+}
+function drawNotify() {
+  const n = S.notify; $('n-kind').value = n.kind; $('n-url').value = n.url;
+  $('n-battery').checked = n.battery; $('n-alert').checked = n.weather_alert; notifyHelp();
+}
+async function saveNotify(btn) {
+  busy(btn, true);
+  try {
+    S = await post('/api/settings', {notify: {kind: $('n-kind').value, url: $('n-url').value,
+      battery: $('n-battery').checked, weather_alert: $('n-alert').checked}});
+    drawNotify(); toast('提醒设置已保存');
+  } catch (e) { toast('保存失败：' + e.message); } finally { busy(btn, false); }
+}
+async function testNotify(btn) {
+  busy(btn, true);
+  try { await post('/api/notify/test'); toast('测试消息已发出，看看手机'); }
+  catch (e) { toast('发送失败：' + e.message + '（先保存再测试）'); } finally { busy(btn, false); }
+}
+
+async function rerender(btn) {
+  busy(btn, true); toast('正在重画…');
+  try { const r = await post('/render'); toast(r.ok ? 'Kindle 1 分钟内换上新画面' : '重画失败：' + r.error); await refreshLive(); }
+  catch (e) { toast('失败：' + e.message); } finally { busy(btn, false); }
+}
+async function fullRefresh(btn) {
+  busy(btn, true);
+  try { await post('/api/full-refresh'); toast('Kindle 1 分钟内会全屏闪一次'); } finally { busy(btn, false); }
+}
+async function loadLog() {
+  const r = await fetch(u('/api/log'), {cache: 'no-store'}); const t = await r.text();
+  const pre = $('logtext'); pre.textContent = t.trim() || '还没有日志：Kindle 还没上传过。'; pre.scrollTop = pre.scrollHeight;
+}
+
+load().catch(e => toast('加载失败：' + e.message + (e.message === '403' ? '（地址里缺 token）' : '')));
+setInterval(refreshLive, 20000);
+</script>
+</body>
+</html>

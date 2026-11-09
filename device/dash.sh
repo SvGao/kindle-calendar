@@ -6,7 +6,7 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$DIR/config.sh" ] && . "$DIR/config.sh"
 
-SERVER="${SERVER:-http://192.168.1.10:8090}"
+SERVER="${SERVER:-http://192.168.1.10:8091}"
 TOKEN="${TOKEN:-}"
 FBINK="${FBINK:-/mnt/us/libkh/bin/fbink}"
 FULL_REFRESH_EVERY="${FULL_REFRESH_EVERY:-24}"   # safety net: full refresh after N partial updates
@@ -32,6 +32,18 @@ CLOCK_HDR="/tmp/kc-clock-hdr"
 clock_x=""; clock_y=""; clock_w=""; clock_h=""; clock_min=""
 online=1
 
+# Clock pack: every HH:MM patch, downloaded once (a few MB) into $PACK_DIR.  With it
+# the minute is drawn from local files -- no network per minute, and the clock
+# keeps running while the NAS or the Wi-Fi is down.  /clock.png stays as the
+# fallback while the pack is missing.
+PACK_DIR="$DIR/clock"
+PACK_KEY="$DIR/clock.key"
+plan_pack=""
+CLOCK_FLASH=1          # flash just the clock strip on the hour to clear ghosting
+TZ_OFFSET=""           # seconds east of UTC, from the plan
+srv_epoch=""; srv_utc=""
+wake_now=0             # set by light_tick when the server has a new poster for us
+
 # --- front light ---------------------------------------------------------------
 # The slider that normally lives in the stock UI is gone while we own the screen,
 # so the server keeps the level and we poll it.  Same once-a-minute cadence as the
@@ -55,6 +67,59 @@ qa() {  # $1 = "fmt=text" style extra query
     if [ -n "$TOKEN" ]; then echo "?$1&token=$TOKEN"; else echo "?$1"; fi
 }
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+
+# Local HH:MM as the server sees it.  The Kindle shell's timezone is not to be
+# trusted once the stock UI is stopped, so use the plan's UTC offset when we have it.
+now_hhmm() {
+    if [ -n "$TZ_OFFSET" ]; then
+        t=$(( $(date +%s) + TZ_OFFSET ))
+        printf '%02d%02d' $(( (t / 3600) % 24 )) $(( (t / 60) % 60 ))
+    else
+        date +%H%M
+    fi
+}
+
+# Keep the Kindle clock on the server's time.  The minute we draw from the pack
+# comes from this clock, so a Kindle running 40 s fast would flip the digits 40 s
+# early.  busybox date understands "@epoch" on most builds; fall back to a UTC
+# timestamp string otherwise.
+time_sync() {
+    [ -n "$srv_epoch" ] || return 0
+    dev=$(date +%s)
+    diff=$(( dev - srv_epoch ))
+    [ "$diff" -lt 0 ] && diff=$(( -diff ))
+    [ "$diff" -le 2 ] && return 0
+    if date -s "@$srv_epoch" >/dev/null 2>&1 ||        { [ -n "$srv_utc" ] && date -u -s "$(echo "$srv_utc" | tr '_' ' ')" >/dev/null 2>&1; }; then
+        log "clock synced, was off by ${diff}s"
+        clock_min=""
+    else
+        log "clock off by ${diff}s but date -s failed"
+    fi
+}
+
+# Download the clock pack when the server has a different one than we do.
+pack_sync() {
+    [ "$CLOCK" = 1 ] || return 0
+    case "$plan_pack" in ''|-) return 0 ;; esac
+    [ "$plan_pack" = "$(cat "$PACK_KEY" 2>/dev/null)" ] && [ -f "$PACK_DIR/1200.png" ] && return 0
+    log "fetching clock pack $plan_pack"
+    rm -rf "$PACK_DIR.new" /tmp/kc-pack.tar
+    if ! curl -fsS -m 300 -o /tmp/kc-pack.tar "$SERVER/clock-pack.tar$(q)"; then
+        log "clock pack download failed"
+        return 1
+    fi
+    mkdir -p "$PACK_DIR.new"
+    if tar -xf /tmp/kc-pack.tar -C "$PACK_DIR.new" && [ -f "$PACK_DIR.new/2359.png" ]; then
+        rm -rf "$PACK_DIR"
+        mv "$PACK_DIR.new" "$PACK_DIR"
+        echo "$plan_pack" > "$PACK_KEY"
+        log "clock pack $plan_pack installed ($(ls "$PACK_DIR" | wc -l) files)"
+    else
+        log "clock pack extract failed"
+        rm -rf "$PACK_DIR.new"
+    fi
+    rm -f /tmp/kc-pack.tar
+}
 
 # Ship the log to the server so debugging never needs a USB cable again.
 push_log() {
@@ -141,10 +206,27 @@ clock_box_restore() {
 clock_tick() {
     [ "$CLOCK" = 1 ] || return 0
     [ -n "$clock_x" ] || return 0
-    [ "$online" = 1 ] || return 0
-    m=$(date +%H:%M)
+    m=$(now_hhmm)
     [ "$m" = "$clock_min" ] && return 0
 
+    # Local pack first: no network, works offline.
+    f="$PACK_DIR/$m.png"
+    if [ -f "$f" ]; then
+        wave="-W REAGL"
+        # On the hour, one flashing refresh of just this strip keeps the digits crisp.
+        case "$m" in *00) [ "$CLOCK_FLASH" = 1 ] && wave="-f" ;; esac
+        # shellcheck disable=SC2086
+        if "$FBINK" -q $wave -g "file=$f,x=$clock_x,y=$clock_y" 2>/dev/null; then
+            clock_min=$m
+            case "$m" in *0|*5) log "clock ok $m (pack)" ;; esac
+        else
+            log "clock blit failed at $m, disabled until next poster"
+            clock_x=""
+        fi
+        return 0
+    fi
+
+    [ "$online" = 1 ] || return 0
     et=$(cat "$CLOCK_ETAG" 2>/dev/null)
     code=$(curl -s -m 15 -D "$CLOCK_HDR" -o "$CLOCK_IMG" -w '%{http_code}' \
         -H "If-None-Match: $et" "$SERVER/clock.png$(q)")
@@ -184,10 +266,16 @@ light_tick() {
     light_min=$m
 
     cur=$(curl -fsS -m 8 "$SERVER/api/light$(qa fmt=text)" 2>/dev/null) || return 0
-    # Expect "level applied".
+    # Expect "level applied poster full".
     set -- $cur
     case "$1" in ''|*[!0-9]*) return 0 ;; esac
     lv=$1
+    # A new poster (console edit, "update now") or a requested full refresh: fetch
+    # it right away instead of waiting for the next 15-minute slot.
+    mine=$(cut -c2-9 "$ETAG_FILE" 2>/dev/null)
+    if { [ -n "$3" ] && [ "$3" != 0 ] && [ "$3" != "$mine" ]; } || [ "$4" = 1 ]; then
+        wake_now=1
+    fi
     [ "$lv" = "$light_level" ] && return 0
     [ -x "$DIR/light.sh" ] || return 0
 
@@ -227,7 +315,7 @@ plan_load() {
 }
 
 plan_apply() {
-    plan_sleep=""
+    plan_sleep=""; srv_epoch=""; srv_utc=""
     while IFS='=' read -r k v; do
         case "$k" in
             clock) CLOCK=$v ;;
@@ -238,6 +326,13 @@ plan_apply() {
                 case "$v" in ''|*[!0-9]*) ;; *) [ "$v" -ge 60 ] && MAX_SLEEP=$v ;; esac ;;
             sleep_s)
                 case "$v" in ''|*[!0-9]*) ;; *) [ "$v" -ge 30 ] && plan_sleep=$v ;; esac ;;
+            clock_pack) plan_pack=$v ;;
+            clock_flash) CLOCK_FLASH=$v ;;
+            tz_offset_s)
+                case "$v" in ''|*[!0-9-]*) ;; *) TZ_OFFSET=$v ;; esac ;;
+            epoch)
+                case "$v" in ''|*[!0-9]*) ;; *) srv_epoch=$v ;; esac ;;
+            utc) srv_utc=$v ;;
         esac
     done
 }
@@ -353,8 +448,9 @@ main() {
     while true; do
         ok=0
         if ensure_wifi; then
-            plan_load
+            plan_load && time_sync
             fetch_and_show && ok=1
+            [ "$ok" = 1 ] && pack_sync
         fi
         if [ "$ok" = 1 ]; then
             fail_count=0
@@ -382,7 +478,8 @@ main() {
         push_log
         # Sleep in short chunks so a resurrected stock UI is reclaimed quickly, and
         # land exactly on the minute boundary so the clock tick is never late.
-        while [ "$secs" -gt 0 ]; do
+        wake_now=0
+        while [ "$secs" -gt 0 ] && [ "$wake_now" = 0 ]; do
             step=$secs
             [ "$step" -gt 15 ] && step=15
             ss=$(date +%S); ss=${ss#0}
@@ -395,6 +492,7 @@ main() {
             clock_tick
             light_tick
         done
+        [ "$wake_now" = 1 ] && log "server has a new poster, fetching now"
     done
 }
 

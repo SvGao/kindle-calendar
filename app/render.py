@@ -8,15 +8,17 @@ import io
 import logging
 import math
 import os
+import tarfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from PIL import Image
 
-from . import device, quotes
+from . import device, events, quotes, store
 from .config import Settings, get_settings
 from .sources import holiday, lunar_info, weather
 
@@ -34,7 +36,10 @@ _lock = threading.Lock()
 # --- context -------------------------------------------------------------------
 
 
-def _month_weeks(today: date, holidays: dict[str, dict[str, Any]]) -> list[list[dict[str, Any]]]:
+def _month_weeks(
+    today: date, holidays: dict[str, dict[str, Any]], marks: dict[str, str] | None = None
+) -> list[list[dict[str, Any]]]:
+    marks = marks or {}
     cal = calendar.Calendar(firstweekday=6)  # Sunday first
     weeks = []
     for week in cal.monthdatescalendar(today.year, today.month):
@@ -45,12 +50,14 @@ def _month_weeks(today: date, holidays: dict[str, dict[str, Any]]) -> list[list[
                 label = lunar_info.day_label(d)
             except Exception:  # noqa: BLE001
                 label = ""
+            mark = marks.get(d.isoformat())
             row.append(
                 {
                     "day": d.day,
                     "other": d.month != today.month,
                     "today": d == today,
-                    "label": label,
+                    "label": mark or label,
+                    "event": bool(mark),
                     "badge": ("休" if h["off"] else "班") if h else None,
                 }
             )
@@ -95,6 +102,21 @@ def build_context(now: datetime, s: Settings | None = None) -> dict[str, Any]:
 
     battery = device.battery_info(now, s)
 
+    prefs = store.effective(s)
+    anniversaries = store.read(s)["anniversaries"]
+    event_tag = None
+    try:
+        near = events.upcoming(anniversaries, today, prefs["event_days"])
+        if near:
+            event_tag = {"text": events.tag_text(near[0]), "today": near[0]["days"] == 0}
+        grid = cal_range(today)
+        marks = events.by_date(anniversaries, grid[0], grid[1])
+    except Exception as e:  # noqa: BLE001
+        log.error("anniversaries failed: %s", e)
+        marks = {}
+
+    nowcast = weather.get_nowcast(s) if wx else None
+
     return {
         "width": s.width,
         "height": s.height,
@@ -108,14 +130,22 @@ def build_context(now: datetime, s: Settings | None = None) -> dict[str, Any]:
         "weather": wx,
         "today_fc": today_fc,
         "forecast": forecast,
-        "weeks": _month_weeks(today, holidays),
+        "weeks": _month_weeks(today, holidays, marks),
+        "event_tag": event_tag,
+        "nowcast": nowcast,
         "city": s.city_name,
         "updated": now.strftime("%H:%M"),
         "device_line": battery["text"] if battery else "",
         "battery_low": bool(battery and battery["low"]),
-        "poem": quotes.pick(now, lunar.get("festivals") or ()),
+        "poem": quotes.pick(now, lunar.get("festivals") or ()) if prefs["show_poem"] else None,
         "warnings": warnings,
     }
+
+
+def cal_range(today: date) -> tuple[date, date]:
+    """First and last date shown in the month grid."""
+    weeks = calendar.Calendar(firstweekday=6).monthdatescalendar(today.year, today.month)
+    return weeks[0][0], weeks[-1][-1]
 
 
 def render_html(ctx: dict[str, Any]) -> str:
@@ -125,24 +155,110 @@ def render_html(ctx: dict[str, Any]) -> str:
 # --- image ---------------------------------------------------------------------
 
 
-def screenshot(html: str, width: int, height: int) -> bytes:
-    from playwright.sync_api import sync_playwright
+class _Chromium:
+    """One long-lived headless Chromium, driven from a single dedicated thread.
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
-        try:
-            page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
-            page.set_content(html, wait_until="load")
-            page.evaluate("document.fonts.ready")
-            return page.screenshot(type="png", full_page=False)
-        finally:
-            browser.close()
+    Launching Chromium costs 1-2 s of CPU on a desktop and more on a NAS; the
+    clock patch alone used to pay that every minute.  Playwright's sync API is
+    bound to the thread that started it, so every call is funnelled through a
+    one-worker executor.  A crash or timeout throws the browser away and the next
+    call starts a fresh one; it is also recycled every RECYCLE_AFTER uses so a
+    slow memory leak can never build up.
+    """
+
+    RECYCLE_AFTER = 500
+
+    def __init__(self) -> None:
+        self._ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="chromium")
+        self._pw = None
+        self._browser = None
+        self._uses = 0
+
+    def _close(self) -> None:
+        for obj, meth in ((self._browser, "close"), (self._pw, "stop")):
+            try:
+                if obj is not None:
+                    getattr(obj, meth)()
+            except Exception:  # noqa: BLE001
+                pass
+        self._pw = self._browser = None
+        self._uses = 0
+
+    def _page(self, width: int, height: int):
+        if self._browser is None or not self._browser.is_connected() or self._uses >= self.RECYCLE_AFTER:
+            self._close()
+            from playwright.sync_api import sync_playwright
+
+            self._pw = sync_playwright().start()
+            self._browser = self._pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+        self._uses += 1
+        return self._browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
+
+    def _call(self, fn: Callable[[Any], Any], width: int, height: int):
+        for attempt in (1, 2):
+            page = None
+            try:
+                page = self._page(width, height)
+                return fn(page)
+            except Exception:
+                if page is not None:
+                    try:
+                        page.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    page = None
+                self._close()
+                if attempt == 2:
+                    raise
+                log.warning("chromium call failed, retrying with a fresh browser", exc_info=True)
+            finally:
+                if page is not None:
+                    try:
+                        page.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+        raise AssertionError("unreachable")
+
+    def run(self, fn: Callable[[Any], Any], width: int, height: int, timeout: float = 600):
+        return self._ex.submit(self._call, fn, width, height).result(timeout=timeout)
+
+
+CHROMIUM = _Chromium()
+
+
+def _load(page, html: str) -> None:
+    page.set_content(html, wait_until="load")
+    page.evaluate("document.fonts.ready")
+
+
+def screenshot(html: str, width: int, height: int) -> bytes:
+    def shoot(page):
+        _load(page, html)
+        return page.screenshot(type="png", full_page=False)
+
+    return CHROMIUM.run(shoot, width, height)
 
 
 CLOCK_PAD = 4  # bled around the .clock box so rounding never leaves a seam
 
 
-def screenshot_clock(html: str, width: int, height: int) -> tuple[bytes, dict[str, float]]:
+def _clock_box(page, width: int, height: int) -> dict[str, int]:
+    el = page.query_selector(".clock")
+    if el is None:
+        raise RuntimeError("clock box missing from template")
+    b = el.bounding_box()
+    if b is None:
+        raise RuntimeError("clock box has no layout box")
+    # Layout boxes are fractional; the framebuffer is not.  Snap outwards to whole
+    # pixels and bleed a few pixels of the surrounding white so a 1px seam can
+    # never show up next to the digits.
+    box = {"x": max(0, math.floor(b["x"]) - CLOCK_PAD), "y": max(0, math.floor(b["y"]) - CLOCK_PAD)}
+    box["width"] = min(width, math.ceil(b["x"] + b["width"]) + CLOCK_PAD) - box["x"]
+    box["height"] = min(height, math.ceil(b["y"] + b["height"]) + CLOCK_PAD) - box["y"]
+    return box
+
+
+def screenshot_clock(html: str, width: int, height: int) -> tuple[bytes, dict[str, int]]:
     """Screenshot only the .clock box, plus its position in CSS pixels.
 
     Rendering from the *same* page as the poster (rather than a font-matched
@@ -150,57 +266,110 @@ def screenshot_clock(html: str, width: int, height: int) -> tuple[bytes, dict[st
     15-minute poster produce byte-identical glyphs -- otherwise the digits would
     visibly jitter every time one replaces the other.
     """
-    from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
-        try:
-            page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
-            page.set_content(html, wait_until="load")
-            page.evaluate("document.fonts.ready")
-            el = page.query_selector(".clock")
-            if el is None:
-                raise RuntimeError("clock box missing from template")
-            b = el.bounding_box()
-            if b is None:
-                raise RuntimeError("clock box has no layout box")
-            # Layout boxes are fractional; the framebuffer is not.  Snap outwards
-            # to whole pixels and bleed a few pixels of the surrounding white so a
-            # 1px seam can never show up next to the digits.
-            box = {
-                "x": max(0, math.floor(b["x"]) - CLOCK_PAD),
-                "y": max(0, math.floor(b["y"]) - CLOCK_PAD),
-            }
-            box["width"] = min(width, math.ceil(b["x"] + b["width"]) + CLOCK_PAD) - box["x"]
-            box["height"] = min(height, math.ceil(b["y"] + b["height"]) + CLOCK_PAD) - box["y"]
-            return page.screenshot(type="png", clip=box), box
-        finally:
-            browser.close()
+    def shoot(page):
+        _load(page, html)
+        box = _clock_box(page, width, height)
+        return page.screenshot(type="png", clip=box), box
+
+    return CHROMIUM.run(shoot, width, height)
 
 
 def clock_device_rect(box: dict[str, float], s: Settings) -> dict[str, int]:
     """Map the landscape clock box into framebuffer coordinates of the device.
 
-    ``to_eink`` rotates the landscape poster by ``-rotate`` degrees (clockwise for
-    the default 90), so a landscape point (x, y) lands at (H - y, x) on the device.
+    ``to_eink`` rotates the landscape poster clockwise by ``rotate`` degrees, so
+    for the default 90 a landscape point (x, y) lands at (H - y, x) on the device.
     """
     x0, y0 = box["x"], box["y"]
     x1, y1 = x0 + box["width"], y0 + box["height"]
-    return {
-        "x": int(round(s.height - y1)),
-        "y": int(round(x0)),
-        "w": int(round(y1 - y0)),
-        "h": int(round(x1 - x0)),
-    }
+    W, H = s.width, s.height
+    if s.rotate == 90:
+        rect = (H - y1, x0, y1 - y0, x1 - x0)
+    elif s.rotate == 180:
+        rect = (W - x1, H - y1, x1 - x0, y1 - y0)
+    elif s.rotate == 270:
+        rect = (y0, W - x1, y1 - y0, x1 - x0)
+    else:
+        rect = (x0, y0, x1 - x0, y1 - y0)
+    return dict(zip(("x", "y", "w", "h"), (int(round(v)) for v in rect)))
 
 
 def render_clock(now: datetime, s: Settings | None = None) -> tuple[bytes, dict[str, int]]:
     """Render the clock patch alone, rotated to device orientation."""
     s = s or get_settings()
-    with _lock:
-        html = render_html(build_context(now, s))
-        patch, box = screenshot_clock(html, s.width, s.height)
-        return to_eink(patch, s.rotate)[0], clock_device_rect(box, s)
+    html = render_html(build_context(now, s))
+    patch, box = screenshot_clock(html, s.width, s.height)
+    return to_eink(patch, s.rotate)[0], clock_device_rect(box, s)
+
+
+# --- clock pack: all 1440 minutes, so the device can draw without the network ---
+
+
+def clock_pack_key(s: Settings | None = None) -> str:
+    """Changes whenever anything that shapes the digits changes."""
+    s = s or get_settings()
+    h = hashlib.sha256()
+    for name in ("dash.html", "icons.html"):
+        h.update((TEMPLATES / name).read_bytes())
+    h.update(f"{s.width}x{s.height}r{s.rotate}g{GRAY_LEVELS}".encode())
+    return h.hexdigest()[:12]
+
+
+def clock_pack_path(s: Settings | None = None) -> Path:
+    s = s or get_settings()
+    return s.out_dir / f"clockpack-{clock_pack_key(s)}.tar"
+
+
+_pack_lock = threading.Lock()
+
+
+def build_clock_pack(s: Settings | None = None) -> Path:
+    """Render every HH:MM patch into one tar of ``HHMM.png`` files (a few MB).
+
+    The device downloads it once and from then on draws the minute locally, so
+    the clock keeps running when the NAS or the Wi-Fi is down, and the NAS no
+    longer renders anything per minute.  The patch content depends only on the
+    clock's styling (the bleed around it is page background), so one pack serves
+    every day; only the blit position, which /api/clock-box reports, can move.
+    """
+    s = s or get_settings()
+    path = clock_pack_path(s)
+    with _pack_lock:
+        if path.exists():
+            return path
+        started = datetime.now()
+        html = render_html(build_context(datetime.now(s.tz), s))
+
+        def shoot_all(page):
+            _load(page, html)
+            box = _clock_box(page, s.width, s.height)
+            shots = []
+            for h in range(24):
+                for m in range(60):
+                    page.evaluate("t => { document.querySelector('.clock').textContent = t }", f"{h:02d}:{m:02d}")
+                    shots.append((f"{h:02d}{m:02d}.png", page.screenshot(type="png", clip=box)))
+            return shots
+
+        shots = CHROMIUM.run(shoot_all, s.width, s.height, timeout=1800)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+            for name, png in shots:
+                data = to_eink(png, s.rotate)[0]
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                info.mtime = int(started.timestamp())
+                tar.addfile(info, io.BytesIO(data))
+        for old in s.out_dir.glob("clockpack-*.tar"):
+            old.unlink(missing_ok=True)
+        _atomic_write(path, buf.getvalue())
+        log.info(
+            "clock pack %s built in %.0fs, %d bytes",
+            path.name,
+            (datetime.now() - started).total_seconds(),
+            path.stat().st_size,
+        )
+        return path
 
 
 def to_eink(png: bytes, rotate: int) -> tuple[bytes, bytes]:

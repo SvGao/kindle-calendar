@@ -15,7 +15,7 @@ Normalized shape:
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -263,3 +263,88 @@ def get_weather(s: Settings, today: date) -> tuple[dict[str, Any] | None, bool]:
         if data is None:
             return None, True
         return data, cache.age_minutes(fetched_at) > s.stale_after_min
+
+
+# --- nowcast: rain in the next two hours ---------------------------------------
+
+NOWCAST_CACHE = "nowcast"
+NOWCAST_REFRESH_MIN = 10
+WET_MM = 0.1  # per 15 minutes; below this it is drizzle nobody notices
+
+
+def _nowcast_text(slots: list[tuple[float, bool]]) -> str | None:
+    """slots: (precip_mm, is_snow) per 15 minutes, starting now. None = dry."""
+    if not slots:
+        return None
+    wet = [p >= WET_MM for p, _ in slots]
+    what = "雪" if any(snow for (p, snow) in slots if p >= WET_MM) else "雨"
+    if wet[0]:
+        if all(wet):
+            return f"未来两小时持续有{what}"
+        stop = wet.index(False) * 15
+        return f"{what}约{stop}分钟后停"
+    if any(wet):
+        start = wet.index(True) * 15
+        return f"约{start}分钟后有{what}"
+    return None
+
+
+def _nowcast_openmeteo(s: Settings) -> str | None:
+    params = {
+        "latitude": s.lat,
+        "longitude": s.lon,
+        "minutely_15": "precipitation,snowfall",
+        "forecast_minutely_15": 9,
+        "timezone": str(s.tz),
+    }
+    r = httpx.get("https://api.open-meteo.com/v1/forecast", params=params, timeout=TIMEOUT)
+    r.raise_for_status()
+    m = r.json()["minutely_15"]
+    now = datetime.now(s.tz).replace(tzinfo=None)
+    slots = []
+    for i, t in enumerate(m["time"]):
+        # Each value covers the 15 minutes *before* its timestamp.
+        if datetime.fromisoformat(t) <= now:
+            continue
+        slots.append((float(m["precipitation"][i] or 0), float((m.get("snowfall") or [0] * len(m["time"]))[i] or 0) > 0))
+    return _nowcast_text(slots[:8])
+
+
+def _nowcast_qweather(s: Settings) -> str | None:
+    r = httpx.get(
+        f"https://{s.qweather_host}/v7/minutely/5m",
+        params={"location": f"{s.lon:.2f},{s.lat:.2f}"},
+        headers={"X-QW-Api-Key": s.qweather_key},
+        timeout=TIMEOUT,
+    )
+    j = r.json()
+    if j.get("code") != "200":
+        raise RuntimeError(f"qweather minutely code={j.get('code')}")
+    rows = j.get("minutely") or []
+    if not any(float(x.get("precip") or 0) > 0 for x in rows):
+        return None
+    return (j.get("summary") or "").strip() or None
+
+
+def get_nowcast(s: Settings) -> str | None:
+    """Short sentence such as "约30分钟后有雨", or None when dry / unknown."""
+    if s.provider == "fake":
+        return "约30分钟后有雨"
+    data, fetched_at = cache.read(NOWCAST_CACHE)
+    if data is not None and cache.age_minutes(fetched_at) < NOWCAST_REFRESH_MIN:
+        return data.get("text")
+    try:
+        try:
+            text = _nowcast_qweather(s) if s.provider == "qweather" else _nowcast_openmeteo(s)
+        except Exception:  # noqa: BLE001
+            if s.provider != "qweather":
+                raise
+            text = _nowcast_openmeteo(s)
+        cache.write(NOWCAST_CACHE, {"text": text})
+        return text
+    except Exception as e:  # noqa: BLE001
+        log.warning("nowcast failed: %s", e)
+        # An old "rain in 30 minutes" is worse than nothing.
+        if data is not None and cache.age_minutes(fetched_at) < 30:
+            return data.get("text")
+        return None

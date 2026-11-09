@@ -55,6 +55,9 @@
   .meta { font-size: 30px; white-space: nowrap; }
   .alert { display: inline-block; margin-top: 4px; font-size: 30px; font-weight: 700; background: #000; color: #fff;
            border-radius: 8px; padding: 2px 14px; max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rain { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 30px; font-weight: 700;
+          border: 3px solid #000; border-radius: 8px; padding: 0 14px 0 10px; white-space: nowrap; }
+  .rain svg { width: 26px; height: 26px; }
   .nodata { font-size: 40px; font-weight: 700; padding: 0 40px; }
 
   .fc { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 3px solid #000; }
@@ -72,6 +75,7 @@
               width: 112px; padding: 4px 0; border-radius: 10px; }
   .cal .n { font-size: 40px; font-weight: 700; line-height: 1.1; }
   .cal .s { font-size: 22px; font-weight: 500; line-height: 1.2; }
+  .cal .s.ev { font-weight: 900; text-decoration: underline; text-underline-offset: 4px; }
   .cal td.other { color: #999; }
   .cal td.today .box { background: #000; color: #fff; }
   .cal .badge { position: absolute; top: 4px; right: 6px; font-size: 20px; font-weight: 700; line-height: 26px;
@@ -107,7 +111,8 @@
       {%- if holiday %}<span class="tag solid">{{ holiday.name }}{{ "放假" if holiday.off else "补班" }}</span>{% endif %}
       {%- for f in lunar.festivals if not (holiday and holiday.name in f) %}<span class="tag">{{ f }}</span>{% endfor %}
       {%- if lunar.jieqi %}<span class="tag solid">{{ lunar.jieqi }}</span>
-      {%- elif lunar.next_term %}<span class="tag">{{ lunar.next_term }}</span>{% endif %}
+      {%- elif lunar.next_term and not event_tag %}<span class="tag">{{ lunar.next_term }}</span>{% endif %}
+      {%- if event_tag %}<span class="tag{{ ' solid' if event_tag.today }}">{{ event_tag.text }}</span>{% endif %}
     </div>
     <div class="clockrow"><div class="clock">{{ hh }}:{{ mm }}</div></div>
     <div class="yiji">
@@ -127,7 +132,8 @@
       <div class="nowinfo">
         <div class="nowtext">{{ weather.now.text }}{% if today_fc %} {{ today_fc.temp_min }}° / {{ today_fc.temp_max }}°{% endif %}</div>
         <div class="meta">湿度 {{ weather.now.humidity }}%　{{ weather.now.wind_dir }} {{ weather.now.wind_scale }}级</div>
-        {%- if weather.aqi %}<div class="meta">空气质量 {{ weather.aqi.value }} {{ weather.aqi.category }}</div>{% endif %}
+        {%- if weather.aqi and not (nowcast and weather.alerts) %}<div class="meta">空气质量 {{ weather.aqi.value }} {{ weather.aqi.category }}</div>{% endif %}
+        {%- if nowcast %}<div><span class="rain"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2c0 0-6.2 7-6.2 11.1a6.2 6.2 0 0 0 12.4 0C18.2 10.2 12 3.2 12 3.2Z" fill="#000"/></svg>{{ nowcast }}</span></div>{% endif %}
         {%- for a in weather.alerts[:1] %}<div><span class="alert">⚠ {{ a.title }}</span></div>{% endfor %}
       </div>
     </div>
@@ -152,7 +158,7 @@
           {%- for c in week %}
           <td class="{{ 'other' if c.other }} {{ 'today' if c.today }}">
             {%- if c.badge %}<span class="badge {{ 'off' if c.badge == '休' else 'work' }}">{{ c.badge }}</span>{% endif %}
-            <div class="box"><span class="n">{{ c.day }}</span><span class="s">{{ c.label }}</span></div>
+            <div class="box"><span class="n">{{ c.day }}</span><span class="s{{ ' ev' if c.event }}">{{ c.label }}</span></div>
           </td>
           {%- endfor %}
         </tr>

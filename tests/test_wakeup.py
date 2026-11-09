@@ -18,13 +18,18 @@ def test_exact_slot_moves_to_following_slot():
     assert wakeup.next_slot(dt(14, 15), 15, NS, NE) == dt(14, 30)
 
 
-def test_last_slot_before_night_jumps_to_morning():
-    assert wakeup.next_slot(dt(22, 50), 15, NS, NE) == datetime(2026, 11, 8, 6, 0)
+def test_last_slot_before_night_jumps_to_morning_when_skipping():
+    assert wakeup.next_slot(dt(22, 50), 15, NS, NE, skip_night=True) == datetime(2026, 11, 8, 6, 0)
 
 
-def test_night_sleeps_until_night_end():
-    assert wakeup.next_slot(dt(23, 30), 15, NS, NE) == datetime(2026, 11, 8, 6, 0)
-    assert wakeup.next_slot(dt(2, 0), 15, NS, NE) == dt(6, 0)
+def test_night_sleeps_until_night_end_when_skipping():
+    assert wakeup.next_slot(dt(23, 30), 15, NS, NE, skip_night=True) == datetime(2026, 11, 8, 6, 0)
+    assert wakeup.next_slot(dt(2, 0), 15, NS, NE, skip_night=True) == dt(6, 0)
+
+
+def test_night_keeps_cadence_by_default():
+    assert wakeup.next_slot(dt(23, 30), 15, NS, NE) == dt(23, 45)
+    assert wakeup.next_slot(dt(2, 0), 15, NS, NE) == dt(2, 15)
 
 
 def test_full_refresh_window():

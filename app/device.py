@@ -74,3 +74,29 @@ def battery_info(now: datetime, s: Settings | None = None) -> dict[str, Any] | N
             hours = int(age.total_seconds() // 3600)
             text += f"（{hours}h前）" if hours else "（旧）"
     return {"pct": batt, "text": text, "low": batt < LOW_BATTERY_PCT}
+
+
+# The device polls /api/light once a minute but only POSTs /api/device with the
+# poster (every 15 min).  Remember the poll too, so "online" means "talked to us
+# in the last few minutes" rather than "reported its battery recently".
+_last_poll: dict[str, datetime | None] = {"at": None}
+
+
+def touch(now: datetime) -> None:
+    _last_poll["at"] = now
+
+
+def last_contact(now: datetime, s: Settings | None = None) -> datetime | None:
+    s = s or get_settings()
+    best = _last_poll["at"]
+    seen = read_state(s).get("seen_at")
+    if seen:
+        try:
+            dt = datetime.fromisoformat(seen)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=now.tzinfo)
+            if best is None or dt > best:
+                best = dt
+        except ValueError:
+            pass
+    return best
